@@ -1,8 +1,6 @@
-/* Road to Glory - realtime relay on Cloudflare (Worker + one Durable Object).
-   Keeps the latest state of every online player and broadcasts changes 20x/second.
-   Story, money, police and NPCs stay local in each browser.
-   v73: + Online Deathmatch fields, + deletions (null) are now broadcast to the other players.
-   v93: + C4 / airdrop fields (dc4, dcx, dcr, dc4r, dkw) and previously missing fields (dsh, dtk, dsx, dsy, dsn, pg); packet cap 4096. */
+/* Road to Glory - Cloudflare Worker + Durable Object relay.
+   v108: preserve the client's movement timestamp (st), including sessions longer
+   than 10,000,000 ms. Relay latest changes approximately 30 times per second. */
 import { DurableObject } from "cloudflare:workers";
 
 export default {
@@ -16,23 +14,23 @@ export default {
 
 const TICK = 33, MAXP = 24, STALE = 25000;
 const NUM = new Set(["o", "x", "y", "a", "m", "d", "i", "rs", "t",
-  // --- deathmatch (v73) ---
   "dk", "dd", "dhp", "dw", "dko", "dpr", "dfs", "dfa", "dph", "dpu",
-  // --- v93 + missing fields ---
   "dkw", "dsh", "dtk", "dsx", "dsy", "dsn", "pg"]);
 const STR = { n: 40, av: 400, v: 24, c: 12, lk: 700, rd: 80,
-  // --- deathmatch (v73) ---
   dm: 24, dpi: 80, dkb: 12, dx: 24,
-  // --- v93 (C4 / airdrops) ---
   dc4: 400, dcx: 60, dcr: 24, dc4r: 40 };
-const DMH = /^h[a-z0-9]{1,8}$/; // deathmatch: "h<id>" = total damage dealt to that player (number)
+const DMH = /^h[a-z0-9]{1,8}$/;
 
 function clean(d) {
   const o = {};
   if (!d || typeof d !== "object" || Array.isArray(d)) return o;
   for (const k in d) {
     const v = d[k];
-    if (NUM.has(k) || DMH.test(k)) {
+    // st is a monotonic elapsed-millisecond clock, not a world coordinate.
+    // Clamping it at 1e7 would freeze sample timestamps after about 2.8 hours.
+    if (k === "st") {
+      if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) o.st = v;
+    } else if (NUM.has(k) || DMH.test(k)) {
       if (v === null) o[k] = null;
       else if (typeof v === "number" && isFinite(v)) o[k] = Math.max(-1e7, Math.min(1e7, v));
     } else if (STR[k]) {
@@ -43,13 +41,12 @@ function clean(d) {
   return o;
 }
 function merge(t, d) { for (const k in d) { if (d[k] === null) delete t[k]; else t[k] = d[k]; } }
-// pending (not yet broadcast) changes must KEEP null markers, otherwise a deletion is never sent to the other players
 function mergePend(t, d) { for (const k in d) t[k] = d[k]; }
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.players = new Map(); // uid -> { ws, state, pend, seen }
+    this.players = new Map();
     this.timer = null; this.n = 0;
     this.origins = String(env.ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
   }
@@ -74,7 +71,6 @@ export class Room extends DurableObject {
     if (typeof raw !== "string" || raw.length > 4096 || ++ws.cnt > 60) return;
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
     if (!m || typeof m !== "object") return;
-
     if (m.t === "hi") {
       const u = m.u;
       if (ws.uid || typeof u !== "string" || !u || u.length > 60) return;
@@ -129,7 +125,6 @@ export class Room extends DurableObject {
       const now = Date.now();
       this.players.forEach((p) => { if (now - p.seen > STALE) { try { p.ws.close(4002, "idle"); } catch (e) {} } });
     }
-    // nobody online: stop the timer so the object can go idle (free plan friendly)
     if (!this.players.size && this.n % 100 === 0) { clearInterval(this.timer); this.timer = null; }
   }
 }
