@@ -1,7 +1,8 @@
 /* Road to Glory - realtime relay on Cloudflare (Worker + one Durable Object).
    Keeps the latest state of every online player and broadcasts changes 20x/second.
    Story, money, police and NPCs stay local in each browser.
-   v73: + Online Deathmatch fields, + deletions (null) are now broadcast to the other players. */
+   v73: + Online Deathmatch fields, + deletions (null) are now broadcast to the other players.
+   v93: + C4 / airdrop fields (dc4, dcx, dcr, dc4r, dkw) and previously missing fields (dsh, dtk, dsx, dsy, dsn, pg); packet cap 4096. */
 import { DurableObject } from "cloudflare:workers";
 
 export default {
@@ -16,10 +17,14 @@ export default {
 const TICK = 50, MAXP = 24, STALE = 25000;
 const NUM = new Set(["o", "x", "y", "a", "m", "d", "i", "rs", "t",
   // --- deathmatch (v73) ---
-  "dk", "dd", "dhp", "dw", "dko", "dpr", "dfs", "dfa", "dph", "dpu"]);
+  "dk", "dd", "dhp", "dw", "dko", "dpr", "dfs", "dfa", "dph", "dpu",
+  // --- v93 + missing fields ---
+  "dkw", "dsh", "dtk", "dsx", "dsy", "dsn", "pg"]);
 const STR = { n: 40, av: 400, v: 24, c: 12, lk: 700, rd: 80,
   // --- deathmatch (v73) ---
-  dm: 24, dpi: 80, dkb: 12, dx: 24 };
+  dm: 24, dpi: 80, dkb: 12, dx: 24,
+  // --- v93 (C4 / airdrops) ---
+  dc4: 400, dcx: 60, dcr: 24, dc4r: 40 };
 const DMH = /^h[a-z0-9]{1,8}$/; // deathmatch: "h<id>" = total damage dealt to that player (number)
 
 function clean(d) {
@@ -66,7 +71,7 @@ export class Room extends DurableObject {
   }
 
   onMessage(ws, raw) {
-    if (typeof raw !== "string" || raw.length > 2048 || ++ws.cnt > 60) return;
+    if (typeof raw !== "string" || raw.length > 4096 || ++ws.cnt > 60) return;
     let m; try { m = JSON.parse(raw); } catch (e) { return; }
     if (!m || typeof m !== "object") return;
 
