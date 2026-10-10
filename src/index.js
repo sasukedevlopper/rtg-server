@@ -14,7 +14,7 @@ export default {
   },
 };
 
-const TICK = 50, MAXP = 24, STALE = 25000;
+const TICK = 33, MAXP = 24, STALE = 25000;
 const NUM = new Set(["o", "x", "y", "a", "m", "d", "i", "rs", "t",
   // --- deathmatch (v73) ---
   "dk", "dd", "dhp", "dw", "dko", "dpr", "dfs", "dfa", "dph", "dpu",
