@@ -46,7 +46,7 @@ function mergePend(t, d) { for (const k in d) t[k] = d[k]; }
 // Backend-only proof adapter for the existing enlt_ sessions. Never put its key in RTG JS.
 class RtgIdentityError extends Error { constructor(code){super(code);this.code=code;} }
 class RtgSessionVerifier {
-  constructor(env,io={}){this.env=env;this.fetch=io.fetch||fetch;this.now=io.now||Date.now;this.crypto=io.crypto||crypto;this.cache=new Map();this.inflight=new Map();this.buckets=new Map();}
+  constructor(env,io={}){this.env=env;this.fetch=io.fetch||((...args)=>fetch(...args));this.now=io.now||Date.now;this.crypto=io.crypto||crypto;this.cache=new Map();this.inflight=new Map();this.buckets=new Map();}
   async digest(s){return Array.from(new Uint8Array(await this.crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),b=>b.toString(16).padStart(2,'0')).join('');}
   canonical(s){return s.toLowerCase().replace(/[.#$\[\]\/]/g,'_');}
   limit(key,max){const t=this.now();for(const [k,b] of this.buckets)if(t-b.at>60000)this.buckets.delete(k);let b=this.buckets.get(key);if(!b){if(this.buckets.size>=1024)throw new RtgIdentityError('rate');b={at:t,n:0};this.buckets.set(key,b);}if(++b.n>max)throw new RtgIdentityError('rate');}
