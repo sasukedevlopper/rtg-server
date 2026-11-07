@@ -3,8 +3,10 @@
    and real WebSocket diagnostics. Deploy with the paired RTG files and SQL. */
 import { DurableObject } from "cloudflare:workers";
 
+let editorVerifier=null;
 export default {
   async fetch(request, env) {
+    if(new URL(request.url).pathname==="/editor/access")return worldEditorAccess(request,env);
     if (request.headers.get("Upgrade") === "websocket") {
       return env.ROOM.get(env.ROOM.idFromName("main")).fetch(request);
     }
@@ -69,6 +71,16 @@ class RtgSessionVerifier {
     const account={accountId:data.player_id,uid:'p_'+(await this.digest(data.player_id)).slice(0,40),username:data.username,name:(typeof data.name==='string'&&data.name?data.name:data.username).slice(0,40),expiresAt,tokenFingerprint:fingerprint,cacheUntil:Math.min(this.now()+5000,expiresAt)};
     const cacheKey=fingerprint+':'+username.toLowerCase();this.cache.delete(cacheKey);this.cache.set(cacheKey,account);while(this.cache.size>128)this.cache.delete(this.cache.keys().next().value);return account;
   }
+}
+
+// Editor grants come from the verified account, never a client display name.
+async function worldEditorAccess(request,env){
+ const origin=request.headers.get('Origin')||'',allowed=String(env.ORIGINS||'').split(',').map(s=>s.trim()).filter(Boolean),headers={'Content-Type':'application/json','Cache-Control':'no-store','Access-Control-Allow-Origin':origin||'*','Vary':'Origin','Access-Control-Allow-Methods':'POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type'};
+ const reply=(status,data)=>new Response(JSON.stringify(data),{status,headers});
+ if(allowed.length&&origin&&!allowed.includes(origin))return reply(403,{ok:false,error:'origin-denied'});
+ if(request.method==='OPTIONS')return new Response(null,{status:204,headers});if(request.method!=='POST')return reply(405,{ok:false,error:'method-not-allowed'});
+ let body;try{const reader=request.body?.getReader();if(!reader)return reply(400,{ok:false,error:'invalid-request'});const chunks=[];let length=0;for(;;){const {done,value}=await reader.read();if(done)break;length+=value.byteLength;if(length>4096){await reader.cancel();return reply(413,{ok:false,error:'request-too-large'});}chunks.push(value);}const all=new Uint8Array(length);let offset=0;for(const chunk of chunks){all.set(chunk,offset);offset+=chunk.byteLength;}body=JSON.parse(new TextDecoder().decode(all));}catch{return reply(400,{ok:false,error:'invalid-request'});}
+ try{if(typeof body?.username!=='string'||typeof body?.token!=='string')return reply(401,{ok:false,error:'sign-in-required'});if(!editorVerifier)editorVerifier=new RtgSessionVerifier(env);const uid=editorVerifier.canonical(body.username),account=await editorVerifier.verify(body.username,body.token,uid,request.headers.get('CF-Connecting-IP')||'unknown',true);if(account.username.toLowerCase()!=='ziaad')return reply(403,{ok:false,error:'editor-restricted'});return reply(200,{ok:true,role:'world-editor',username:'ziaad',expiresAt:Math.min(account.expiresAt,Date.now()+35000)});}catch(error){return reply(error.code==='credentials'?401:error.code==='rate'?429:503,{ok:false,error:error.code==='credentials'?'sign-in-required':error.code==='rate'?'rate-limited':'verification-unavailable'});}
 }
 
 const THREE=(()=>{const module={exports:{}};const exports=module.exports;/**
